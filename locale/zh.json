@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "书架",
+    "description": "在 DSH 右侧栏里读小说：右侧栏「开始」页上的书架标签页，窗口一失焦整个右栏收起，切回来一键接上。书自己带：导入 TXT / EPUB / 单文件阅读页 HTML，或从 dsh-novel 的下载缓存搬；带目录搜索、字号 / 行距 / 纸张色。",
+    "detail": "docs/DETAIL.md"
+  }
+}

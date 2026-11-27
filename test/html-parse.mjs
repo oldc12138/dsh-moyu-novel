@@ -1,0 +1,11 @@
+﻿import fs from "node:fs";
+const { chaptersFromHtml } = await import("../lib/importers.js");
+const html = fs.readFileSync("D:/Documents/deepseek-harness/default-workspace/运营资料汇编.html", "utf8");
+const started = Date.now();
+const parsed = chaptersFromHtml(html);
+console.log("title:", parsed.title);
+console.log("chapters:", parsed.chapters.length, "ms:", Date.now() - started);
+console.log("first:", parsed.chapters[0].title, "| len", parsed.chapters[0].text.length);
+console.log("sample:", JSON.stringify(parsed.chapters[1]?.text.slice(0, 60)));
+console.log("last:", parsed.chapters.at(-1).title, "| len", parsed.chapters.at(-1).text.length);
+console.log("total chars:", parsed.chapters.reduce((n, c) => n + c.text.length, 0));

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Bookshelf",
+    "description": "Reads novels in the DSH right column as a bookshelf tab on the Start page; losing window focus collapses the whole column, and the native expand control brings the same chapter back. Bring your own books: import TXT, EPUB or a single-file reader HTML, or copy the dsh-novel download cache. Ships contents search plus font size, line height and paper colour.",
+    "detail": "docs/DETAIL.md"
+  }
+}
