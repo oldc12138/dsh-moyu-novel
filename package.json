@@ -1,0 +1,57 @@
+{
+  "name": "dsh-moyu-novel",
+  "version": "1.0.0",
+  "description": "A side-panel novel reader for DeepSeek Harness that disappears the moment the window loses focus.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "novel",
+    "reader",
+    "sidebar"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oldc12138/dsh-moyu-novel.git"
+  },
+  "homepage": "https://github.com/oldc12138/dsh-moyu-novel#readme",
+  "bugs": {
+    "url": "https://github.com/oldc12138/dsh-moyu-novel/issues"
+  },
+  "author": "oldc12138"
+}
