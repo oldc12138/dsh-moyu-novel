@@ -1229,19 +1229,45 @@ window.__ModuleLoader__.load({
         // chapter back without any custom handle.
         ctx.effect(() => {
           const hide = () => {
-            if (!readerVisible || collapseRightbar === null) return
+            if (!readerVisible || collapseRightbar === null) return false
             try {
               collapseRightbar()
+              return true
             } catch {
               /* the frame may not expose the action in this build */
+              return false
             }
+          }
+          // Chromium throttles the render that applies a state change while the
+          // window sits in the background, so the collapse can end up landing
+          // only when the user comes back. Ask again on a short timer: the point
+          // is that the column is gone *while* you are away.
+          let retries = []
+          const dropRetries = () => {
+            for (const timer of retries) clearTimeout(timer)
+            retries = []
+          }
+          const leave = () => {
+            dropRetries()
+            if (!hide()) return
+            retries = [120, 400, 1200].map((delay) => setTimeout(() => {
+              if (document.hasFocus?.() === true) return
+              hide()
+            }, delay))
           }
           const onBlur = (event) => {
             if (event.target !== window && event.target !== document) return
-            hide()
+            leave()
           }
-          const onVisibility = () => { if (document.hidden) hide() }
-          const onPageHide = () => hide()
+          const onVisibility = () => { if (document.hidden) leave() }
+          const onPageHide = () => leave()
+          // Some frames deliver the departure as a focusout with no next target
+          // rather than a window blur; `hasFocus()` keeps a click on empty page
+          // space from being mistaken for one.
+          const onFocusOut = (event) => {
+            if (event.relatedTarget !== null) return
+            if (document.hasFocus?.() === false) leave()
+          }
           const onKeyDown = (event) => {
             if (event.key !== 'Escape' || event.defaultPrevented) return
             if (state.tocOpen) {
@@ -1253,11 +1279,14 @@ window.__ModuleLoader__.load({
             }
           }
           window.addEventListener('blur', onBlur, true)
+          document.addEventListener('focusout', onFocusOut, true)
           document.addEventListener('visibilitychange', onVisibility, true)
           window.addEventListener('pagehide', onPageHide, true)
           window.addEventListener('keydown', onKeyDown, true)
           return () => {
+            dropRetries()
             window.removeEventListener('blur', onBlur, true)
+            document.removeEventListener('focusout', onFocusOut, true)
             document.removeEventListener('visibilitychange', onVisibility, true)
             window.removeEventListener('pagehide', onPageHide, true)
             window.removeEventListener('keydown', onKeyDown, true)
