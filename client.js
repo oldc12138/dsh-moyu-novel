@@ -409,7 +409,9 @@ window.__ModuleLoader__.load({
       try {
         const chapter = await api(`/chapter?id=${encodeURIComponent(book.id)}&index=${bounded}`)
         if (seq !== chapterSeq) return
-        commit({ text: chapter.text ?? '', loading: false, error: '' })
+        // `readRatio` tracks the chapter the reader is showing; without this the
+        // progress bar would keep the previous chapter's offset after a jump.
+        commit({ text: chapter.text ?? '', loading: false, error: '', readRatio: ratio })
         requestAnimationFrame(() => requestAnimationFrame(() => {
           const scroller = document.getElementById('moyu-novel-scroll')
           if (!scroller) return
@@ -792,6 +794,29 @@ window.__ModuleLoader__.load({
         node.addEventListener('scroll', onScroll, { passive: true })
         return () => node.removeEventListener('scroll', onScroll)
       }, [s.index, s.book?.id])
+
+      // Reopening the column remounts the pane at scrollTop 0. Put the reader
+      // back where the last scroll left it, once the body and the pane have a
+      // height (the column can still be opening on the first frames).
+      const restored = useRef(false)
+      useEffect(() => {
+        if (restored.current || !s.text) return
+        const node = scroller.current
+        if (!node) return
+        restored.current = true
+        const ratio = Math.min(1, Math.max(0, Number(s.readRatio) || 0))
+        if (ratio <= 0) return
+        let frames = 0
+        const place = () => {
+          frames += 1
+          if (node.clientHeight === 0) {
+            if (frames < 90) requestAnimationFrame(place)
+            return
+          }
+          node.scrollTop = ratio * Math.max(0, node.scrollHeight - node.clientHeight)
+        }
+        requestAnimationFrame(place)
+      }, [s.text])
 
       const total = s.chapters.length
       const chapterTitle = s.chapters[s.index]?.title || tr('reader.chapter', { n: s.index + 1 })
