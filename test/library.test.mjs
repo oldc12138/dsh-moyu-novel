@@ -51,6 +51,46 @@ test('normalizeBody collapses blank runs', () => {
   assert.equal(normalizeBody('a\n\n\n\nb'), 'a\n\nb')
 })
 
+test('normalizeBody drops a title pasted into the middle of sentences', () => {
+  // The shape uukan serves: the watermark sits between the real words and the
+  // sentence mark, twenty-odd times in one chapter.
+  const sentence = '少年缓缓抬起头来，漆黑的眸子木然扫过，嘴角的自嘲变得更苦涩了。'
+  const polluted = sentence.repeat(60).replace(/。/g, '水印书名。')
+  assert.ok(polluted.includes('水印书名'), 'fixture is wrong')
+  const cleaned = normalizeBody(polluted)
+  assert.ok(!cleaned.includes('水印书名'), 'watermark survived')
+  assert.equal((cleaned.match(/。/g) ?? []).length, 60, 'punctuation changed')
+  assert.ok(cleaned.includes('嘴角的自嘲变得更苦涩了。'), 'prose damaged')
+})
+
+test('normalizeBody leaves ordinary repeated prose alone', () => {
+  const lines = [
+    '他抬头看了看天色，云层压得很低，风从山口灌进来，吹得衣角猎猎作响。',
+    '街角那家药铺的招牌晃了晃，伙计探出头来，又缩了回去。',
+    '少年没有回头，只是把手里的木牌攥得更紧了些。',
+    '院子里有人在扫落叶，扫帚擦过青石，声音一阵一阵的。',
+    '他笑了一下，然后走开了。',
+    '远处的山脊压着一层灰白，像是要落雪了。',
+    '老人把茶碗搁在桌上，眼皮都没有抬一下。',
+    '铜钱在指缝间翻了两圈，落回掌心。',
+    '窗纸被风顶得鼓起来，又慢慢平下去。',
+    '巷子尽头的灯笼亮了一盏，昏黄昏黄的。',
+    '她把袖口理了理，转身进了内堂。',
+    '马蹄声从街上过去，很快就听不见了。',
+    '少年捏着那枚令牌，指尖有些发凉。',
+    '屋檐下积着一线雨水，滴在石阶上。',
+    '掌柜拨了拨算盘珠子，抬头报了个价。',
+    '风停了，院子里只剩下虫鸣。',
+    '他靠着门框站了一会儿，终于还是走了进去。',
+    '炉子里的火苗跳了一下，映得人脸发红。',
+    '檐角的风铃响了两声，便不再作声。',
+    '所有人都安静下来，等着那句回答。',
+  ]
+  const text = Array.from({ length: 120 }, (_, i) => lines[i % lines.length]).join('')
+  assert.ok(text.length > 2000, 'fixture needs length')
+  assert.equal(normalizeBody(text), text.trim())
+})
+
 test('extractMainText ignores chrome around the article', () => {
   const html = `<html><head><title>t</title><style>.x{}</style></head><body>
     <nav><a href="/">首页</a><a href="/a">目录</a></nav>
