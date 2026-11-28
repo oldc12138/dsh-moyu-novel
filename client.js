@@ -43,8 +43,11 @@ window.__ModuleLoader__.load({
         'shelf.emptyHint': '对 AI 说：「帮我找《书名》，下到书架」。',
         'shelf.import': '从 dsh-novel 导入',
         'shelf.importEmpty': 'dsh-novel 书架上没有可导入的书。',
+        'shelf.noNovel': '这台机器上没有 dsh-novel（或它还没有书）。可以让 AI 直接把本地文件、网页正文或整本书的 HTML 导进来：试试「把这个文件导入书架」并附上路径。',
         'shelf.importing': '正在导入…',
         'shelf.imported': '已导入',
+        'shelf.howToAdd': '怎么加书',
+        'shelf.refreshed': '已补上 {n} 章。',
         'shelf.missing': '缺 {n} 章',
         'shelf.progress': '{done}/{total} 章',
         'shelf.delete': '删除这本书',
@@ -106,8 +109,11 @@ window.__ModuleLoader__.load({
         'shelf.emptyHint': 'Try: “Find <title> and put it on my bookshelf”.',
         'shelf.import': 'Import from dsh-novel',
         'shelf.importEmpty': 'The dsh-novel shelf is empty.',
+        'shelf.noNovel': 'dsh-novel is not installed here (or holds no books). Ask the agent to import a local file, a page of text, or a whole-book HTML: “put this file on my bookshelf” with the path.',
         'shelf.importing': 'Importing…',
         'shelf.imported': 'Imported',
+        'shelf.howToAdd': 'How to add books',
+        'shelf.refreshed': 'Filled in {n} more chapters.',
         'shelf.missing': '{n} missing',
         'shelf.progress': '{done}/{total} chapters',
         'shelf.delete': 'Remove this book',
@@ -247,6 +253,7 @@ window.__ModuleLoader__.load({
       view: 'shelf',
       books: null,
       shelf: null,
+      shelfAvailable: true,
       error: '',
       notice: '',
       book: null,
@@ -309,7 +316,7 @@ window.__ModuleLoader__.load({
     async function loadShelf() {
       try {
         const data = await api('/shelf')
-        commit({ shelf: data.books ?? [], error: '' })
+        commit({ shelf: data.books ?? [], shelfAvailable: data.available !== false, error: '' })
       } catch (error) {
         commit({ shelf: [], error: error.message })
       }
@@ -390,13 +397,18 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Newest chapter request; an older answer must not touch the reader. */
+    let chapterSeq = 0
+
     async function loadChapter(index, ratio = 0) {
       const book = state.book
       if (!book) return
       const bounded = Math.max(0, Math.min(book.chapters.length - 1, index))
+      const seq = (chapterSeq += 1)
       commit({ loading: true, index: bounded, error: '', text: '' })
       try {
         const chapter = await api(`/chapter?id=${encodeURIComponent(book.id)}&index=${bounded}`)
+        if (seq !== chapterSeq) return
         commit({ text: chapter.text ?? '', loading: false, error: '' })
         requestAnimationFrame(() => requestAnimationFrame(() => {
           const scroller = document.getElementById('moyu-novel-scroll')
@@ -405,6 +417,7 @@ window.__ModuleLoader__.load({
           scroller.scrollTop = ratio > 0 ? ratio * max : 0
         }))
       } catch (error) {
+        if (seq !== chapterSeq) return
         commit({ loading: false, error: error.message, text: '' })
       }
     }
@@ -674,13 +687,16 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dsh-moyu-empty' },
           h('div', null, tr('shelf.empty')),
           h('div', { style: { marginTop: 8 } }, tr('shelf.emptyHint')),
+          s.shelfAvailable === false
+            ? h('div', { style: { marginTop: 12, textAlign: 'left' } }, tr('shelf.noNovel'))
+            : null,
           h('div', { style: { marginTop: 14 } },
             h('button', {
               type: 'button',
               className: 'dsh-moyu-btn',
               'data-primary': 'true',
               onClick: () => { commit({ view: 'import' }); void loadShelf() },
-            }, tr('shelf.import')),
+            }, s.shelfAvailable === false ? tr('shelf.howToAdd') : tr('shelf.import')),
           ),
         )
       }
@@ -700,6 +716,15 @@ window.__ModuleLoader__.load({
       const s = useStore()
       const [busyKey, setBusyKey] = useState('')
       const rows = s.shelf
+      if (s.shelfAvailable === false && (rows === null || rows.length === 0)) {
+        return h('div', { className: 'dsh-moyu-empty' },
+          h('div', null, tr('shelf.noNovel')),
+          h('div', { style: { marginTop: 10 } }, tr('shelf.emptyHint')),
+          h('div', { style: { marginTop: 14 } },
+            h('button', { type: 'button', className: 'dsh-moyu-btn', onClick: () => commit({ view: 'shelf' }) }, '← ' + tr('shelf.back')),
+          ),
+        )
+      }
       return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
         rows === null
           ? h('div', { className: 'dsh-moyu-empty' }, tr('shelf.loading'))
@@ -728,7 +753,8 @@ window.__ModuleLoader__.load({
                       })
                       await loadBooks()
                       commit({ view: 'shelf', error: '' })
-                      if (result.missing > 0) commit({ notice: tr('shelf.missingImported', { n: result.missing }) })
+                      if (result.filled > 0) commit({ notice: tr('shelf.refreshed', { n: result.filled }) })
+                      else if (result.missing > 0) commit({ notice: tr('shelf.missingImported', { n: result.missing }) })
                     } catch (error) {
                       commit({ error: error.message })
                     } finally {
@@ -1012,8 +1038,10 @@ window.__ModuleLoader__.load({
       const s = useStore()
 
       useEffect(() => {
+        readerVisible = true
         void resume()
         // The first paint of the pane is when the column becomes visible.
+        return () => { readerVisible = false }
       }, [])
 
       const inReader = s.view === 'reader' && s.book
@@ -1047,21 +1075,57 @@ window.__ModuleLoader__.load({
 
     /* ------------------------------------------------------------- plugin */
 
+    /** True while the bookshelf pane is rendered; blur-collapse checks it. */
+    let readerVisible = false
+
+    /** Bound from the layout service; null when this build has no such action. */
+    let collapseRightbar = null
+
     /** Set by apply(): opening the shelf is `sidebarRight.openTab(kind)`. */
     let openShelfTab = () => {}
 
     return {
       inject: ['slots'],
       apply(ctx) {
-        try {
-          const locale = ctx.get('locale')
-          if (locale) {
-            ctx.effect(() => locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'moyu-novel: dictionaries')
-            boundTranslate = locale.bind(NS)
-          }
-        } catch {
-          /* the built-in dictionary still covers both languages */
+        // The built-in dictionary covers both languages already; the service
+        // adds the app's own switching, and it may arrive after this plugin.
+        const bindLocale = (hostCtx) => {
+          const locale = hostCtx.get('locale')
+          if (!locale || typeof locale.register !== 'function') return
+          hostCtx.effect(() => {
+            const dispose = locale.register(NS, { zh: DICT.zh, en: DICT.en })
+            boundTranslate = typeof locale.bind === 'function' ? locale.bind(NS) : null
+            return () => {
+              boundTranslate = null
+              try { dispose?.() } catch { /* the registry may be gone */ }
+            }
+          }, 'moyu-novel: dictionaries')
         }
+        try {
+          if (typeof ctx.inject === 'function') ctx.inject(['locale'], bindLocale)
+        } catch {
+          /* fall through to the direct lookup */
+        }
+        if (boundTranslate === null) bindLocale(ctx)
+
+        // Auto-hide needs the layout action; it is core, but resolve it through
+        // the service instead of hoping `ctx.layout` happens to be attached.
+        const bindLayout = (hostCtx) => {
+          try {
+            const layout = (typeof hostCtx.get === 'function' ? hostCtx.get('layout') : null) ?? hostCtx.layout
+            if (layout && typeof layout.closeRightbar === 'function') {
+              collapseRightbar = () => layout.closeRightbar()
+            }
+          } catch {
+            /* the frame may not expose the action in this build */
+          }
+        }
+        try {
+          if (typeof ctx.inject === 'function') ctx.inject(['layout'], bindLayout)
+        } catch {
+          /* fall through to the direct lookup */
+        }
+        if (collapseRightbar === null) bindLayout(ctx)
 
         // Stage one: the tab type, plus the guide card that opens it. The
         // service is provisioned by ui-sidebar-right, which may activate after
@@ -1125,7 +1189,6 @@ window.__ModuleLoader__.load({
             name: 'settings.general.item',
             id: 'moyu-novel',
             order: 50,
-            label: () => tr('settings.label'),
           }, SettingsRow))
         } catch (error) {
           console.warn('[moyu-novel] settings row unavailable:', error)
@@ -1136,8 +1199,9 @@ window.__ModuleLoader__.load({
         // chapter back without any custom handle.
         ctx.effect(() => {
           const hide = () => {
+            if (!readerVisible || collapseRightbar === null) return
             try {
-              ctx.layout?.closeRightbar?.()
+              collapseRightbar()
             } catch {
               /* the frame may not expose the action in this build */
             }

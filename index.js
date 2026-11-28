@@ -7,7 +7,7 @@
  */
 import path from 'node:path'
 import { Library, isValidId } from './lib/library.js'
-import { dshHome, readNovelShelf } from './lib/sources.js'
+import { dshHome, hasNovelCache, readNovelShelf } from './lib/sources.js'
 import { downloadChapters, importFile, importNovelCache, importText, importUrl } from './lib/importers.js'
 import { normalizeBody } from './lib/text.js'
 
@@ -50,20 +50,30 @@ function json(res, status, body) {
   res.end(payload)
 }
 
+const MAX_BODY_BYTES = 1_000_000
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
+    let tooLarge = false
     req.on('data', (chunk) => {
+      if (tooLarge) return
       size += chunk.length
-      if (size > 1_000_000) {
-        reject(new Error('请求体过大'))
-        req.destroy()
+      if (size > MAX_BODY_BYTES) {
+        tooLarge = true
+        const error = new Error('请求体过大')
+        error.status = 413
+        // Drain instead of destroy: destroying the socket would also swallow
+        // the 413 response the caller needs to see.
+        reject(error)
+        req.resume()
         return
       }
       chunks.push(chunk)
     })
     req.on('end', () => {
+      if (tooLarge) return
       const raw = Buffer.concat(chunks).toString('utf8')
       if (raw.trim() === '') return resolve({})
       try {
@@ -74,6 +84,26 @@ function readBody(req) {
     })
     req.on('error', reject)
   })
+}
+
+/**
+ * The reader API lives on the same origin as the app. The web server has no
+ * server-wide auth, so this route enforces its own: a page on another origin
+ * must not be able to delete books or read a whole library over loopback.
+ */
+function sameOrigin(req) {
+  const headers = req.headers ?? {}
+  const site = headers['sec-fetch-site']
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return false
+  const origin = headers.origin
+  if (typeof origin === 'string' && origin !== '') {
+    try {
+      return new URL(origin).host === headers.host
+    } catch {
+      return false
+    }
+  }
+  return true
 }
 
 export function apply(ctx, config = {}) {
@@ -100,6 +130,7 @@ export function apply(ctx, config = {}) {
       kind: 'prefix',
       path: ROUTE_PREFIX,
       handler: async (req, res) => {
+        if (!sameOrigin(req)) return json(res, 403, { error: '跨站请求已拒绝' })
         const url = new URL(req.url ?? '/', 'http://localhost')
         const route = url.pathname.slice(ROUTE_PREFIX.length) || '/'
         try {
@@ -138,7 +169,7 @@ export function apply(ctx, config = {}) {
           }
 
           if (req.method === 'GET' && route === '/api/shelf') {
-            return json(res, 200, { books: await readNovelShelf() })
+            return json(res, 200, { books: await readNovelShelf(), available: await hasNovelCache() })
           }
 
           if (req.method === 'POST' && route === '/api/shelf/import') {
@@ -153,6 +184,8 @@ export function apply(ctx, config = {}) {
               title: result.book.title,
               chapters: result.chapters,
               missing: result.missing,
+              filled: result.filled ?? 0,
+              merged: result.merged === true,
             })
           }
 
@@ -165,8 +198,9 @@ export function apply(ctx, config = {}) {
 
           return json(res, 404, { error: '未知接口' })
         } catch (error) {
+          const status = Number(error?.status) || 500
           warn(hostCtx, `${route} 失败: ${error instanceof Error ? error.message : String(error)}`)
-          return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
+          return json(res, status, { error: error instanceof Error ? error.message : String(error) })
         }
       },
         })
@@ -328,8 +362,9 @@ export function apply(ctx, config = {}) {
     name: 'moyu_novel_download',
     description: [
       '按已知的章节地址批量抓正文并入库（一次最多 40 章）。适合「已经找到一本书的目录页、拿到各章 URL」之后落地成本地书。',
-      '章节地址来自 web_fetch 或 web_search 的结果；站点的正文容器不确定时先传 contentSelector（如 #content、.read-content）再小批量试。',
-      '站点有频率限制：默认每章间隔 800ms，失败会逐条报告原因，隔一会儿再补抓。',
+      '抓取是限速的：请求之间共享一个 5 秒间隔（跨多次调用也生效），撞到站点频率限制（HTTP 400/403/429）会先冷却 70 秒重试一次，再失败就停下并把没抓到的 URL 放进 remaining，不会硬撞封禁。',
+      '已入库的章节按章名跳过，所以「把 remaining 原样再传一次」就是安全的续传：不会重复、不会乱序、已读进度不受影响。',
+      '站点正文容器不确定时先传 contentSelector（如 #content、.read-content）再小批量试；站点正常约 12 章/分钟，300 章大致要 25 分钟，分批跑即可。',
     ].join(''),
     parameters: objectSchema({
       title: { type: 'string', description: '书名（新建时必填）' },
@@ -348,13 +383,19 @@ export function apply(ctx, config = {}) {
       },
       bookId: { type: 'string', description: '已有书的 id：给了就往这本后面追加；不给则新建' },
       contentSelector: { type: 'string', description: '正文容器的 CSS 选择器；缺省自动识别' },
-      delayMs: { type: 'integer', description: '每章间隔毫秒，默认 800' },
+      delayMs: { type: 'integer', description: '每章间隔毫秒，默认 5000（站点配额约 12 章/分钟，不要调小）' },
     }, ['chapters']),
     output: textOutput(objectSchema({
       id: { type: 'string' },
       title: { type: 'string' },
       added: { type: 'integer' },
       total: { type: 'integer' },
+      skipped: { type: 'integer', description: '按章名跳过、本来就在书里的章节数（续传时正常出现）' },
+      remaining: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '因限速提前停下时，还没抓的章节地址；原样再调用一次即可续传',
+      },
       failures: {
         type: 'array',
         items: objectSchema({ url: { type: 'string' }, reason: { type: 'string' } }),
@@ -370,13 +411,15 @@ export function apply(ctx, config = {}) {
         author: input.author,
         chapters: list,
         selector: input.contentSelector,
-        delayMs: Number.isFinite(input.delayMs) ? Number(input.delayMs) : 800,
+        delayMs: Number.isFinite(input.delayMs) ? Number(input.delayMs) : undefined,
       })
       return {
         id: result.book?.id ?? '',
         title: result.book?.title ?? '',
         added: result.added,
         total: result.book?.chapters.length ?? 0,
+        skipped: result.skipped ?? 0,
+        remaining: result.remaining ?? [],
         failures: result.failures,
       }
     },
