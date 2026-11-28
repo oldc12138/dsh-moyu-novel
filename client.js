@@ -31,7 +31,6 @@ window.__ModuleLoader__.load({
         'settings.desc': '在右侧栏安静地看小说；窗口失去焦点时自动收起。',
         'settings.open': '打开',
         'settings.opening': '正在打开…',
-        'guide.desc': '在右侧栏读小说，窗口一失焦就收起。',
         'shelf.title': '书架',
         'shelf.loading': '读取中…',
         'shelf.chapters': '{n} 章',
@@ -98,7 +97,6 @@ window.__ModuleLoader__.load({
         'settings.desc': 'Read quietly in the right column; it collapses when the window loses focus.',
         'settings.open': 'Open',
         'settings.opening': 'Opening…',
-        'guide.desc': 'Read novels in the right column; collapses when the window loses focus.',
         'shelf.title': 'Bookshelf',
         'shelf.loading': 'Loading…',
         'shelf.chapters': '{n} chapters',
@@ -1183,7 +1181,6 @@ window.__ModuleLoader__.load({
                   id: 'shelf',
                   order: 30,
                   title: () => tr('tab.title'),
-                  description: () => tr('guide.desc'),
                   icon: GuideIcon,
                 }],
               })
