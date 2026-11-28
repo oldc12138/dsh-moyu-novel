@@ -5,11 +5,18 @@ DSH 右侧栏里的小说阅读标签页：和「工作区文件 / 浏览器 / �
 
 ## 安装
 
-插件市场收录之前，两种装法：
+在 DSH 的 **插件 → 添加插件** 里，安装规格填下面任一种：
 
-1. **本地目录**：把本仓库放到任意位置，在 DSH 的 **插件 → 添加插件** 里把安装规格填成
-   `link:D:/tools/dsh-moyu-novel`（换成你的实际路径，Windows 下用正斜杠或双反斜杠都行）。
-2. **按包名**（发布到 npm 之后）：直接填 `dsh-moyu-novel`。
+1. **整包地址**（不用 git、不用 npm，最省事）：
+
+   ```
+   https://github.com/oldc12138/dsh-moyu-novel/releases/download/v1.0.0/dsh-moyu-novel-1.0.0.tgz
+   ```
+
+2. **本地目录**：先下载仓库或上面那个 tgz 解开，然后填 `link:D:/tools/dsh-moyu-novel`
+   （换成你的实际路径；Windows 下正斜杠、双反斜杠都行）。
+
+3. **按包名**：`dsh-moyu-novel`（发布到 npm 之后才有）。
 
 装好后刷新页面，右栏 **开始** 页就会多一张「书架」卡片。
 
