@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
         'shelf.missingImported': '有 {n} 章还没被 dsh-novel 缓存，读到时会是空白。',
         'banner.dismiss': '关闭提示',
         'shelf.empty': '书架是空的。让 AI 帮你找书，或从 dsh-novel 导入。',
+        'shelf.emptyNoNovel': '书架是空的。',
         'shelf.emptyHint': '对 AI 说：「帮我找《书名》，下到书架」。',
         'shelf.import': '从 dsh-novel 导入',
         'shelf.importEmpty': 'dsh-novel 书架上没有可导入的书。',
@@ -106,6 +107,7 @@ window.__ModuleLoader__.load({
         'shelf.missingImported': '{n} chapters were never cached by dsh-novel and will read as blank.',
         'banner.dismiss': 'Dismiss',
         'shelf.empty': 'No books yet. Ask the agent to find one, or import from dsh-novel.',
+        'shelf.emptyNoNovel': 'No books yet.',
         'shelf.emptyHint': 'Try: “Find <title> and put it on my bookshelf”.',
         'shelf.import': 'Import from dsh-novel',
         'shelf.importEmpty': 'The dsh-novel shelf is empty.',
@@ -691,20 +693,26 @@ window.__ModuleLoader__.load({
       const s = useStore()
       if (s.books === null) return h('div', { className: 'dsh-moyu-empty' }, tr('shelf.loading'))
       if (s.books.length === 0) {
+        // dsh-novel is an optional neighbour: only offer its import path once we
+        // know its cache is actually there, so a standalone install does not send
+        // people down a dead end.
+        const withNovel = s.shelfAvailable !== false
         return h('div', { className: 'dsh-moyu-empty' },
-          h('div', null, tr('shelf.empty')),
+          h('div', null, withNovel ? tr('shelf.empty') : tr('shelf.emptyNoNovel')),
           h('div', { style: { marginTop: 8 } }, tr('shelf.emptyHint')),
-          s.shelfAvailable === false
-            ? h('div', { style: { marginTop: 12, textAlign: 'left' } }, tr('shelf.noNovel'))
+          withNovel
+            ? null
+            : h('div', { style: { marginTop: 12, textAlign: 'left' } }, tr('shelf.noNovel')),
+          withNovel
+            ? h('div', { style: { marginTop: 14 } },
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-moyu-btn',
+                  'data-primary': 'true',
+                  onClick: () => { commit({ view: 'import' }); void loadShelf() },
+                }, tr('shelf.import')),
+              )
             : null,
-          h('div', { style: { marginTop: 14 } },
-            h('button', {
-              type: 'button',
-              className: 'dsh-moyu-btn',
-              'data-primary': 'true',
-              onClick: () => { commit({ view: 'import' }); void loadShelf() },
-            }, s.shelfAvailable === false ? tr('shelf.howToAdd') : tr('shelf.import')),
-          ),
         )
       }
       return h('div', { className: 'dsh-moyu-body' },
@@ -1070,6 +1078,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         readerVisible = true
         void resume()
+        // Resolve whether dsh-novel is present before the empty state renders.
+        void loadShelf()
         // The first paint of the pane is when the column becomes visible.
         return () => { readerVisible = false }
       }, [])
