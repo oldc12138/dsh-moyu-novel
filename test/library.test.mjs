@@ -62,6 +62,20 @@ test('extractMainText ignores chrome around the article', () => {
   assert.ok(text.length > 200)
 })
 
+test('extractMainText prefers the inner article over a chrome wrapper', () => {
+  const html = `<html><body>
+    <div class="content">
+      <ol class="breadcrumb"><li>首页</li><li>游戏</li><li>书名</li></ol>
+      <div>第1章 标题</div>
+      <div>关灯 字体- 字体+ 目录 书签 报错</div>
+      <div id="content" class="readcontent"><p>${'正文内容。'.repeat(60)}</p></div>
+    </div></body></html>`
+  const text = extractMainText(html)
+  assert.ok(text.includes('正文内容。'), 'body missing')
+  assert.ok(!text.includes('首页'), 'wrapper chrome leaked in')
+  assert.ok(!text.includes('关灯'), 'toolbar leaked in')
+})
+
 test('extractMainText honours an explicit selector', () => {
   const html = '<html><body><div class="a">AAA</div><div class="b">BBB</div></body></html>'
   assert.equal(extractMainText(html, '.b'), 'BBB')
