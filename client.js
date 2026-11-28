@@ -389,10 +389,15 @@ window.__ModuleLoader__.load({
         await loadChapter(start, saved.ratio)
         try { localStorage.setItem('moyu-novel.lastBook', id) } catch { /* ignore */ }
       } catch (error) {
-        commit({ loading: false, error: error.message, view: 'shelf', book: null })
+        // Resuming into a book that was deleted (the shelf was cleared, or it
+        // went away in another window) is not something to shout about: drop the
+        // stale pointer and land on the shelf.
         if (fallbackToShelf) {
+          commit({ loading: false, error: '', view: 'shelf', book: null })
           try { localStorage.removeItem('moyu-novel.lastBook') } catch { /* ignore */ }
           await loadBooks()
+        } else {
+          commit({ loading: false, error: error.message, view: 'shelf', book: null })
         }
       }
     }
