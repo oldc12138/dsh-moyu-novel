@@ -49,7 +49,7 @@
 | 网页 | `source: url`：整本书的单页正文，或一个 `.epub` 直链 |
 | 正文 | `source: text`：把已抓到的正文直接导入，含「第X章」会自动分章 |
 
-AI 侧的工具：`moyu_novel_library`（列书）、`moyu_novel_import`（导入）、`moyu_novel_download`（按章节 URL 批量抓取，一次最多 40 章）、`moyu_novel_read`（读某一章核对）、`moyu_novel_remove`（删书）。
+AI 侧的工具：`moyu_novel_library`（列书）、`moyu_novel_import`（导入）、`moyu_novel_download`（按章节 URL 抓取，默认先抓前 20 章、其余排进后台队列）、`moyu_novel_prefetch`（看后台进度、暂停/继续/取消）、`moyu_novel_read`（读某一章核对）、`moyu_novel_remove`（删书）。
 
 ## 边界与注意事项
 

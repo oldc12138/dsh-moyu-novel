@@ -9,6 +9,7 @@ import path from 'node:path'
 import { Library, isValidId } from './lib/library.js'
 import { dshHome, hasNovelCache, readNovelShelf } from './lib/sources.js'
 import { downloadChapters, importFile, importNovelCache, importText, importUrl } from './lib/importers.js'
+import { Prefetch } from './lib/prefetch.js'
 import { normalizeBody } from './lib/text.js'
 
 export const name = 'dsh-moyu-novel'
@@ -112,6 +113,10 @@ export function apply(ctx, config = {}) {
     ? options.libraryDir
     : path.join(dshHome(), 'moyu-novel')
   const library = new Library(libraryDir)
+
+  // The tail of a long download runs on its own clock: the reader gets the
+  // first chapters now, and the rest lands while they read.
+  const prefetch = new Prefetch(library, { log: (message) => warn(ctx, message) })
 
   /* ---------------------------------------------------------------- routes */
 
@@ -361,17 +366,17 @@ export function apply(ctx, config = {}) {
   const downloadTool = {
     name: 'moyu_novel_download',
     description: [
-      '按已知的章节地址批量抓正文并入库（一次最多 40 章）。适合「已经找到一本书的目录页、拿到各章 URL」之后落地成本地书。',
-      '抓取是限速的：请求之间共享一个 5 秒间隔（跨多次调用也生效），撞到站点频率限制（HTTP 400/403/429）会先冷却 70 秒重试一次，再失败就停下并把没抓到的 URL 放进 remaining，不会硬撞封禁。',
-      '已入库的章节按章名跳过，所以「把 remaining 原样再传一次」就是安全的续传：不会重复、不会乱序、已读进度不受影响。',
-      '站点正文容器不确定时先传 contentSelector（如 #content、.read-content）再小批量试；站点正常约 12 章/分钟，300 章大致要 25 分钟，分批跑即可。',
+      '按已知的章节地址抓正文并入库。适合「已经找到一本书的目录页、拿到各章 URL」之后落地成本地书。',
+      '默认行为：先把前 20 章（initial）抓下来立刻能读，剩下的全部排进后台队列慢慢补——每 10 秒一章、每 50 章休息 90 秒，撞到站点频率限制还会自己退避。所以这里可以一次把整本的章节列表都传进来，不用分批。',
+      '已入库的章节按章名跳过，所以重复调用是安全的续传：不会重复、不会乱序、已读进度不受影响。',
+      '站点正文容器不确定时先传 contentSelector（如 #content、.read-content）；background=false 会退回「只抓这一批、剩下的还给你」，适合一次只想下几十章的情况。',
     ].join(''),
     parameters: objectSchema({
       title: { type: 'string', description: '书名（新建时必填）' },
       author: { type: 'string', description: '作者' },
       chapters: {
         type: 'array',
-        description: '章节列表，按阅读顺序',
+        description: '章节列表，按阅读顺序；可以给整本的（后台会接着补）',
         items: {
           type: 'object',
           properties: {
@@ -383,7 +388,9 @@ export function apply(ctx, config = {}) {
       },
       bookId: { type: 'string', description: '已有书的 id：给了就往这本后面追加；不给则新建' },
       contentSelector: { type: 'string', description: '正文容器的 CSS 选择器；缺省自动识别' },
-      delayMs: { type: 'integer', description: '每章间隔毫秒，默认 5000（站点配额约 12 章/分钟，不要调小）' },
+      delayMs: { type: 'integer', description: '同步这一批每章间隔毫秒，默认 5000（站点配额约 12 章/分钟，不要调小）' },
+      initial: { type: 'integer', description: '先同步抓多少章，剩下的进后台队列；默认 20，最多 40' },
+      background: { type: 'boolean', description: '是否把剩下的章节排进后台队列，默认 true；传 false 则只抓这一批（最多 40 章）' },
     }, ['chapters']),
     output: textOutput(objectSchema({
       id: { type: 'string' },
@@ -400,28 +407,84 @@ export function apply(ctx, config = {}) {
         type: 'array',
         items: objectSchema({ url: { type: 'string' }, reason: { type: 'string' } }),
       },
+      queued: { type: 'integer', description: '排进后台队列的章节数' },
+      background: { type: 'boolean', description: '是否有后台队列在跑' },
     })),
     async execute(args) {
       const input = args ?? {}
-      const list = Array.isArray(input.chapters) ? input.chapters.slice(0, MAX_DOWNLOAD_BATCH) : []
-      if (list.length === 0) throw new Error('chapters 不能为空')
+      const all = Array.isArray(input.chapters) ? input.chapters : []
+      if (all.length === 0) throw new Error('chapters 不能为空')
+      const background = input.background !== false
+      const wanted = Number.isFinite(input.initial) ? Math.trunc(Number(input.initial)) : 20
+      const initial = Math.min(Math.max(1, wanted), MAX_DOWNLOAD_BATCH)
+      const head = background ? all.slice(0, initial) : all.slice(0, MAX_DOWNLOAD_BATCH)
+      const tail = background ? all.slice(initial) : []
       const result = await downloadChapters(library, {
         bookId: typeof input.bookId === 'string' && input.bookId !== '' ? input.bookId : undefined,
         title: input.title,
         author: input.author,
-        chapters: list,
+        chapters: head,
         selector: input.contentSelector,
         delayMs: Number.isFinite(input.delayMs) ? Number(input.delayMs) : undefined,
       })
+      let queued = 0
+      if (tail.length > 0 && result.book !== null) {
+        queued = await prefetch.enqueue({
+          bookId: result.book.id,
+          title: result.book.title,
+          chapters: tail,
+        })
+      }
       return {
         id: result.book?.id ?? '',
         title: result.book?.title ?? '',
         added: result.added,
-        total: result.book?.chapters.length ?? 0,
-        skipped: result.skipped ?? 0,
-        remaining: result.remaining ?? [],
+        total: result.book?.chapters.length ?? result.added,
+        skipped: result.skipped,
+        remaining: result.remaining,
         failures: result.failures,
+        queued,
+        background: queued > 0,
       }
+    },
+  }
+
+  const prefetchTool = {
+    name: 'moyu_novel_prefetch',
+    description: [
+      '长书的「后台静默补章」队列：下载工具默认把超出前 20 章的章节排进来，这里负责查看和控制。',
+      'status 不传 bookId 会列出所有书；pause / resume / cancel 需要 bookId。',
+      '队列每 10 秒一章、每 50 章休息 90 秒，连续失败 4 次会停下来等 resume；DSH 重启后会自己接着跑。',
+    ].join(''),
+    parameters: objectSchema({
+      action: { type: 'string', enum: ['status', 'pause', 'resume', 'cancel'], description: '要做什么，默认 status' },
+      bookId: { type: 'string', description: '只处理这本书；status 可以不给' },
+    }, ['action']),
+    output: textOutput(objectSchema({
+      queues: {
+        type: 'array',
+        items: objectSchema({
+          bookId: { type: 'string' },
+          title: { type: 'string' },
+          pending: { type: 'integer', description: '还没下的章节数' },
+          done: { type: 'integer', description: '这个队列已经补了多少章' },
+          failed: { type: 'integer', description: '重试后仍失败的章节数' },
+          paused: { type: 'boolean' },
+          lastError: { type: 'string' },
+        }),
+      },
+      ok: { type: 'boolean' },
+    })),
+    async execute(args) {
+      const input = args ?? {}
+      const action = typeof input.action === 'string' && input.action !== '' ? input.action : 'status'
+      const bookId = typeof input.bookId === 'string' ? input.bookId : ''
+      if (action === 'status') return { queues: prefetch.status(bookId) }
+      if (bookId === '') throw new Error('bookId 不能为空')
+      if (action === 'pause') return { ok: await prefetch.pause(bookId) }
+      if (action === 'resume') return { ok: await prefetch.resume(bookId) }
+      if (action === 'cancel') return { ok: await prefetch.cancel(bookId) }
+      throw new Error(`未知 action：${action}`)
     },
   }
 
@@ -439,7 +502,7 @@ export function apply(ctx, config = {}) {
     },
   }
 
-  for (const tool of [libraries, importTool, readTool, downloadTool, removeTool]) {
+  for (const tool of [libraries, importTool, readTool, downloadTool, prefetchTool, removeTool]) {
     ctx.effect(() => {
       try {
         return ctx.tools.register(tool)
@@ -455,4 +518,13 @@ export function apply(ctx, config = {}) {
     void library.ensure().catch(() => {})
     return () => {}
   }, 'dsh-moyu-novel: library dir')
+
+  // Pick up any background queue the previous run left behind, and stop the
+  // timers when this plugin is disposed.
+  ctx.effect(() => {
+    void prefetch.restore().catch((error) => {
+      warn(ctx, `后台队列恢复失败：${error instanceof Error ? error.message : String(error)}`)
+    })
+    return () => prefetch.dispose()
+  }, 'dsh-moyu-novel: prefetch queue')
 }
